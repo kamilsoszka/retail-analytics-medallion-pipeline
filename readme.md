@@ -1,141 +1,117 @@
-Retail Analytics Medallion Pipeline
+Retail Analytics – Databricks Medallion Pipeline
 
 License: MIT
 Author: Kamil Soszka
 Repository: https://github.com/kamilsoszka/retail-analytics-databricks
 
-AI-Assisted Engineering – This project was developed with generative AI as a co-pilot, accelerating implementation from weeks to days while maintaining production-grade quality. It showcases modern data engineering practices and is a valuable portfolio piece for data professionals.
+AI-Assisted Engineering – This project was developed with generative AI as a co-pilot, accelerating implementation from weeks to days while maintaining production-grade quality.
 
-Project Overview
+Overview
 
-This project processes 10 million synthetic retail sales rows through a Medallion architecture (Bronze -> Silver -> Gold) in Databricks. It demonstrates end-to-end data engineering: ingestion, cleaning, transformation, optimization, and validation. The final output includes 17 analytical tables that answer key business questions (product margin, promotion uplift, customer RFM, returns analysis, etc.). This is a high-value, production-ready pipeline that can be adapted to real-world retail data.
+A production-grade, end-to-end data pipeline for retail transaction analytics built on 10 million synthetic sales rows. Implements Medallion architecture (Bronze -> Silver -> Gold) inside Databricks with Unity Catalog, Delta Lake, and Spark.
 
-Key Deliverables
+- 10 million synthetic sales rows (2023-01-01 to 2026-05-26) with realistic revenue trend: decline (60k->50k) -> flat -> strong rise to 95k daily net sales.
+- End-to-end automation – from CSV ingestion to 17 analytical tables.
+- Data quality checks + model validation (orphan keys, range, hour, delivery logic).
+- 17 materialized analytical views – product margin, promotion uplift, RFM segmentation, returns, channel performance, Pareto, basket analysis, delivery impact, warranty/eco, hourly sales, recency impact, and more.
 
-- 10 million synthetic sales transactions with realistic trends
-- Three-layer Medallion schema (01_bronze, 02_silver, 03_gold)
-- Unified orchestrator notebook (00_run_all_pipeline)
-- Delta Lake optimizations: Z-Order and bin-packing for performance
-- 17 business-ready SQL views (e.g., margin, promo performance, RFM)
-- Data quality validation suite
-- Optional Power BI report (RetailAnalytics_Databricks.pbix)
+All percentage columns are stored as decimal fractions (e.g., 0.1196 = 11.96%). Negative margins are allowed.
+
+Architecture – Medallion Layers
+
+CSV files (from Volume)
+   |
+   v
+Bronze (raw Delta)
+- Explicit StructType schemas (no inferSchema)
+- Audit columns: _source_file, _ingestion_ts
+   |
+   v
+Silver (cleaned & standardised)
+- Single-pass projection casting to DecimalType
+- Negate qty for returns (prevents double COGS)
+- Deduplicate on primary keys, coalesce partitions
+   |
+   v
+Gold (17 analytical tables)
+- Materialized Delta tables with aggregate-then-join CTEs
+- Direct Lake ready for Power BI
+   |
+   v
+Power BI / SQL Endpoint
 
 Repository Structure
 
 retail-analytics-databricks/
-├── .gitignore
-├── README.md
-├── csv/                                 (folder with generated CSV files – ignored by Git due to large size)
-├── notebooks/
-│   ├── 00_run_all_pipeline.py
-│   ├── 01_ingest_bronze.py
-│   ├── 02_transform_silver.py
-│   ├── 03_create_gold_views.sql
-│   ├── 04_optimize_delta.py
-│   └── 05_validate_silver_gold.sql
-├── reports/
-│   └── RetailAnalytics_Databricks.pbix
-└── scripts/
-    └── generate_retail_data.py
+  .gitignore
+  README.md
+  csv/                                 (generated CSV files – ignored by Git)
+  notebooks/
+    00_run_all_pipeline.py
+    01_ingest_bronze.py
+    02_transform_silver.py
+    03_create_gold_views.sql
+    04_optimize_delta.py
+    05_validate_silver_gold.sql
+  reports/
+    RetailAnalytics_Databricks.pbix   (optional, large file – ignored by Git)
+  scripts/
+    generate_retail_data.py
 
-Step 1: Generate Synthetic Data
+Data Generation Rules
 
-pip install pandas numpy
-python scripts/generate_retail_data.py
+- 10,000,000 fact rows with daily net sales target scaled to match a realistic trend.
+- Dimensions: dim_date (1243), dim_customer (200k), dim_product (2000), dim_store (200), dim_promotion (101 including promoid=0). No dummy rows with -1.
+- Margins distribution: 5% exactly 30%, 5% 20-29%, 5% exactly 15%, 50% 5-10%, 30% 0-5%, 5% negative (-10% to 0%).
+- Returns: 2-8% return rate depending on channel. When isreturn = 1, qty is negated in the Silver layer.
+- Hourly distribution: different probability curves for Online, Mobile App, Phone Order, and In-Store (extended hours for Convenience/Hypermarket).
 
-This creates the csv/ folder with six CSV files (dim_date, dim_customer, dim_product, dim_store, dim_promotion, fact_sales). The fact_sales.csv is about 1 GB and is ignored by Git.
+How to Reproduce
 
-Step 2: Databricks Setup
+Local data generation
 
-- Create a catalog named 'retail_catalog' (or use an existing one).
-- Create three schemas: '01_bronze', '02_silver', '03_gold'.
-- Create a volume 'csv_files/raw' under the default schema.
-- Upload the CSV files from your local csv/ folder to the volume path: /Volumes/retail_catalog/default/csv_files/raw/
-- Use a running interactive cluster (Shared or Single Node). Do not use a SQL Warehouse because the pipeline includes Python notebooks.
+1. Install dependencies: pip install pandas numpy
+2. Run: python scripts/generate_retail_data.py
+3. CSV files will be created in the csv/ folder.
 
-Step 3: Run the Pipeline
+Databricks Setup
 
-1. Import all files from the 'notebooks/' directory into your Databricks workspace.
-2. Attach your cluster to the orchestrator notebook '00_run_all_pipeline'.
-3. Execute '00_run_all_pipeline'. It will run the following notebooks in order:
-   - 01_ingest_bronze.py (loads CSV into Bronze Delta tables)
-   - 02_transform_silver.py (cleans and writes Silver tables)
-   - 03_create_gold_views.sql (creates 17 Gold tables)
-   - 04_optimize_delta.py (runs OPTIMIZE and Z-ORDER)
-   - 05_validate_silver_gold.sql (performs data quality checks)
+- Create a catalog (e.g., retail_catalog) with Unity Catalog enabled.
+- Create three schemas: 01_bronze, 02_silver, 03_gold.
+- Create a volume (e.g., default.csv_files) and upload the CSV files to a subfolder raw.
+- Use a running interactive cluster (not a SQL Warehouse).
 
-After successful execution, you can query the Gold tables directly, for example:
-SELECT * FROM retail_catalog.`03_gold`.vw_001_product_category_margin LIMIT 100;
+Run Pipeline
 
-Step 4: Validation Queries (optional, run manually)
+1. Import all notebooks from the notebooks/ folder into your Databricks workspace.
+2. Attach the cluster to 00_run_all_pipeline.
+3. Run 00_run_all_pipeline. It will execute:
+   - 01_ingest_bronze (loads CSV to Bronze)
+   - 02_transform_silver (cleans and writes Silver)
+   - 03_create_gold_views (creates 17 Gold tables)
+   - 04_optimize_delta (optimizes Delta tables)
+   - 05_validate_silver_gold (runs data quality checks)
 
-To verify data consistency, run the following SQL queries in a Databricks SQL notebook or query editor:
+Validation Queries (run manually in a SQL notebook)
 
--- Query 1: Aggregated revenue and margin by category and customer tier (top 5)
+-- 1. Aggregated revenue and margin by category and customer tier (top 5)
 USE CATALOG retail_catalog;
-SELECT 
-  p.category, 
-  c.tier, 
-  COUNT(*) AS transaction_count, 
-  ROUND(SUM(s.net), 2) AS total_revenue,
-  ROUND(SUM(s.grossvalue - s.discountamount - (s.qty * p.unitcost)), 2) AS total_margin,
-  CONCAT(CAST(ROUND(SUM(s.grossvalue - s.discountamount - (s.qty * p.unitcost)) / NULLIF(SUM(s.net), 0) * 100, 2) AS STRING), '%') AS margin_pct
-FROM `02_silver`.silver_factsales s
-INNER JOIN `02_silver`.silver_dimproduct p ON s.productid = p.productid
-INNER JOIN `02_silver`.silver_dimcustomer c ON s.customerid = c.customerid
-WHERE s.isreturn = 0
-GROUP BY p.category, c.tier
-ORDER BY transaction_count DESC
-LIMIT 5;
+SELECT p.category, c.tier, COUNT(*) AS transaction_count, ROUND(SUM(s.net), 2) AS total_revenue, ROUND(SUM(s.grossvalue - s.discountamount - (s.qty * p.unitcost)), 2) AS total_margin, CONCAT(CAST(ROUND(SUM(s.grossvalue - s.discountamount - (s.qty * p.unitcost)) / NULLIF(SUM(s.net), 0) * 100, 2) AS STRING), '%') AS margin_pct FROM `02_silver`.silver_factsales s INNER JOIN `02_silver`.silver_dimproduct p ON s.productid = p.productid INNER JOIN `02_silver`.silver_dimcustomer c ON s.customerid = c.customerid WHERE s.isreturn = 0 GROUP BY p.category, c.tier ORDER BY transaction_count DESC LIMIT 5;
 
--- Query 2: Product-level validation for specific products from vw_001
+-- 2. Product-level validation for specific products from vw_001
 USE CATALOG retail_catalog;
-SELECT 
-  name AS `Product Name`, 
-  ROUND(total_revenue, 2) AS `Revenue USD`,
-  ROUND(total_cost, 2) AS `Cost USD`,
-  ROUND(total_margin, 2) AS `Margin USD`,
-  CONCAT(CAST(ROUND(margin_pct * 100, 2) AS STRING), '%') AS `Margin %`,
-  rank_in_cat AS `Rank`
-FROM `03_gold`.vw_001_product_category_margin
-WHERE name IN (
-  'Mattel Max Lego Set', 'Nerf Core Board Game Series 5',
-  'Mattel Studio Cart', 'Playmobil Mini Plushie V2',
-  'Playmobil Mini Action Figure Series 5'
-)
-ORDER BY `Revenue USD` DESC, `Product Name` ASC;
+SELECT name AS `Product Name`, ROUND(total_revenue, 2) AS `Revenue USD`, ROUND(total_cost, 2) AS `Cost USD`, ROUND(total_margin, 2) AS `Margin USD`, CONCAT(CAST(ROUND(margin_pct * 100, 2) AS STRING), '%') AS `Margin %`, rank_in_cat AS `Rank` FROM `03_gold`.vw_001_product_category_margin WHERE name IN ('Mattel Max Lego Set', 'Nerf Core Board Game Series 5', 'Mattel Studio Cart', 'Playmobil Mini Plushie V2', 'Playmobil Mini Action Figure Series 5') ORDER BY `Revenue USD` DESC, `Product Name` ASC;
 
-Gold Views (17)
+Performance Optimisations
 
-001 vw_001_product_category_margin
-002 vw_002_promo_performance
-003 vw_003_customer_rfm_segments
-004 vw_004_returns_analysis
-005 vw_005_channel_performance
-006 vw_006_seasonal_category_revenue
-007 vw_007_store_performance_by_region_type
-008 vw_008_pareto_margin_analysis
-009 vw_009_delivery_speed_impact
-010 vw_010_warranty_eco_impact
-011 vw_011_hourly_sales_margin_analysis
-012 vw_012_pareto_revenue_margin
-013 vw_013_basket_analysis
-014 vw_014_delivery_speed_impact_detailed
-015 vw_015_margin_by_price_tier
-016 vw_016_recency_impact_on_spend
-017 vw_017_promo_margin_efficiency
+- Data generation: vectorised numpy/pandas, chunked writing.
+- Bronze: explicit StructType schemas, lineage columns.
+- Silver: single projection pass, coalesce, qty negation, deduplication.
+- Gold: aggregate-then-join CTEs, materialized Delta tables.
+- Delta maintenance: Z-Order on (datekey, productid, customerid) for silver_factsales, compaction for gold tables.
 
-Maintenance
+AI Contribution & Quality Assurance
 
-Run the '04_optimize_delta.py' notebook periodically (e.g., weekly) to keep Delta tables compact and well-organized. This will improve query performance.
-
-Why This Project Is Valuable
-
-- Demonstrates end-to-end data engineering on a large scale (10M rows)
-- Uses modern tools: Databricks, Delta Lake, Unity Catalog, Spark
-- Implements best practices: Medallion architecture, type safety, optimization (Z-Order)
-- Includes rigorous data quality validation
-- Serves as a portfolio piece for job interviews or client work
-- Fully reproducible with open-source scripts and clear documentation
+The AI generated consistent code, refactored PySpark notebooks, fixed SQL syntax issues, and implemented defensive checks. Result: production-ready, minimal bugs, follows industry best practices.
 
 License: MIT
